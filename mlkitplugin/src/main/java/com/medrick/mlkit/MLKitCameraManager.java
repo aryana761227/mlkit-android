@@ -120,28 +120,44 @@ public class MLKitCameraManager {
                 imageAnalysis);
     }
 
+    public void initializeFaceDetector() {
+    }
+
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
         @ExperimentalGetImage
         @Override
         public void analyze(@NonNull ImageProxy imageProxy) {
             frameCounter++;
 
+            Log.d(TAG, "Analyzing frame: " + frameCounter);
+
             // Only analyze every X frames for performance
             if (frameCounter % analyzerInterval != 0) {
+                Log.d(TAG, "Skipping frame due to interval");
                 imageProxy.close();
                 return;
             }
 
             // Get image
             InputImage image = InputImage.fromMediaImage(
-                    Objects.requireNonNull(imageProxy.getImage()),
+                    imageProxy.getImage(),
                     imageProxy.getImageInfo().getRotationDegrees());
+
+            if (image == null) {
+                Log.e(TAG, "Failed to create InputImage - image is null");
+                imageProxy.close();
+                return;
+            }
+
+            Log.d(TAG, "Processing image for face detection...");
 
             // Process image
             faceDetector.process(image)
                     .addOnSuccessListener(faces -> {
+                        Log.d(TAG, "Face detection success! Found " + faces.size() + " faces");
                         // Format results
-                        String result = formatFaceResults(faces);
+                        String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
+                        Log.d(TAG, "Sending to Unity: " + result);
                         UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
                     })
                     .addOnFailureListener(e -> {
@@ -149,30 +165,63 @@ public class MLKitCameraManager {
                         UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
                     })
                     .addOnCompleteListener(task -> {
+                        Log.d(TAG, "Face detection task completed");
                         imageProxy.close();
                     });
         }
     }
 
-    private String formatFaceResults(List<Face> faces) {
+    private String formatFaceResults(List<Face> faces, int width, int height) {
         StringBuilder result = new StringBuilder();
         result.append("FACES_COUNT:").append(faces.size()).append("|");
 
         for (Face face : faces) {
             android.graphics.Rect bounds = face.getBoundingBox();
+
+            // Get existing probabilities
+            Float smileProbability = face.getSmilingProbability();
+            Float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
+            Float rightEyeOpenProbability = face.getRightEyeOpenProbability();
+
+            // Calculate upsetness score (inverted smile + eye closure)
+            float upsetness = calculateUpsetness(smileProbability, leftEyeOpenProbability, rightEyeOpenProbability);
+
             result.append("FACE:")
                     .append(bounds.left).append(",")
                     .append(bounds.top).append(",")
                     .append(bounds.width()).append(",")
                     .append(bounds.height()).append("|")
-                    .append("SMILE:").append(face.getSmilingProbability()).append("|")
-                    .append("LEFT_EYE:").append(face.getLeftEyeOpenProbability()).append("|")
-                    .append("RIGHT_EYE:").append(face.getRightEyeOpenProbability()).append("|");
+                    .append("SMILE:").append(smileProbability).append("|")
+                    .append("LEFT_EYE:").append(leftEyeOpenProbability).append("|")
+                    .append("RIGHT_EYE:").append(rightEyeOpenProbability).append("|")
+                    .append("UPSETNESS:").append(upsetness).append("|");
         }
 
         return result.toString();
     }
+    private float calculateUpsetness(Float smileProbability, Float leftEyeOpenProbability, Float rightEyeOpenProbability) {
+        // Handle null values (can happen if face data is incomplete)
+        float smile = smileProbability != null ? smileProbability : 0.5f;
+        float leftEye = leftEyeOpenProbability != null ? leftEyeOpenProbability : 0.5f;
+        float rightEye = rightEyeOpenProbability != null ? rightEyeOpenProbability : 0.5f;
 
+        // Calculate upsetness score (range 0-1)
+        // 1. Invert smile (not smiling can indicate upset)
+        float notSmiling = 1.0f - smile;
+
+        // 2. Eye openness - both fully open or fully closed aren't upset indicators
+        //    Partially closed eyes can indicate upset
+        float leftEyeUpset = Math.abs(leftEye - 0.3f) < 0.3f ? (0.3f - Math.abs(leftEye - 0.3f)) / 0.3f : 0f;
+        float rightEyeUpset = Math.abs(rightEye - 0.3f) < 0.3f ? (0.3f - Math.abs(rightEye - 0.3f)) / 0.3f : 0f;
+        float eyeUpset = Math.max(leftEyeUpset, rightEyeUpset);
+
+        // 3. Combine factors (weighted sum)
+        // Not smiling is a stronger indicator than eye state
+        float upsetness = (0.7f * notSmiling) + (0.3f * eyeUpset);
+
+        // Ensure range is 0-1
+        return Math.min(1.0f, Math.max(0.0f, upsetness));
+    }
     public void setDetectionInterval(int interval) {
         this.analyzerInterval = Math.max(1, interval);
     }
