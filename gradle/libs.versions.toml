@@ -1,11 +1,11 @@
 [versions]
 agp = "7.4.2"
-cameraCore = "1.4.2"
+cameraCore = "1.2.3"
 faceDetection = "16.1.7"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
-appcompat = "1.7.0"
+appcompat = "1.6.1"
 faceMeshDetection = "16.0.0-beta3"
 
 [libraries]
@@ -13,6 +13,7 @@ camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "cam
 camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
 camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraCore" }
 camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraCore" }
+camera-video = { module = "androidx.camera:camera-video", version.ref = "cameraCore" }
 face-detection = { module = "com.google.mlkit:face-detection", version.ref = "faceDetection" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
@@ -21,4 +22,4 @@ appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "a
 face-mesh-detection = { group = "com.google.mlkit", name = "face-mesh-detection", version.ref = "faceMeshDetection" }
 
 [plugins]
-android-application = { id = "com.android.application", version = "7.4.2" }
+android-application = { id = "com.android.application", version.ref = "agp" }
