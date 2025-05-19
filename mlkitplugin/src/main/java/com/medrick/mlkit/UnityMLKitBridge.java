@@ -1,31 +1,53 @@
 package com.medrick.mlkit;
 
 import android.app.Activity;
+import android.content.pm.PackageManager;
 import android.util.Log;
+
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.unity3d.player.UnityPlayer;
 
 public class UnityMLKitBridge {
     private static final String TAG = "UnityMLKitBridge";
-    private static MLKitCameraManager cameraManager;
+    private static MLKitCameraManager cameraManager;  // This is null when startCamera is called
     private static Activity currentActivity;
 
     // Called from Unity to initialize the ML Kit
+    // In UnityMLKitBridge.java
     public static void initialize() {
         Log.d(TAG, "Initializing ML Kit");
         currentActivity = UnityPlayer.currentActivity;
+        // Check camera permission first
+        checkCameraPermission();
 
         currentActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                cameraManager = new MLKitCameraManager(currentActivity);
-
-                // Notify Unity that initialization is complete
-                UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "SUCCESS");
+                try {
+                    Log.d(TAG, "About to create camera manager");
+                    cameraManager = new MLKitCameraManager(currentActivity);
+                    Log.d(TAG, "Camera manager created successfully");
+                    UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "SUCCESS");
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to create camera manager", e);
+                    UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "ERROR: " + e.getMessage());
+                }
             }
         });
     }
+    private static void checkCameraPermission() {
+        if (ContextCompat.checkSelfPermission(currentActivity, android.Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
 
+            Log.d(TAG, "Requesting camera permission");
+            String[] permissions = {android.Manifest.permission.CAMERA};
+            ActivityCompat.requestPermissions(currentActivity, permissions, 100);
+        } else {
+            Log.d(TAG, "Camera permission already granted");
+        }
+    }
     // Called from Unity to start the camera
     public static void startCamera() {
         if (cameraManager == null) {

@@ -10,7 +10,6 @@ android {
         minSdk = 23
         targetSdk = 34
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        multiDexEnabled = true
     }
 
     buildTypes {
@@ -25,6 +24,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    packagingOptions {
+        resources {
+            pickFirsts.add("META-INF/*")
+        }
     }
 
 }
