@@ -7,9 +7,10 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        minSdk = 21
+        minSdk = 23
         targetSdk = 34
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -29,8 +30,6 @@ android {
 }
 configurations.all {
     resolutionStrategy {
-        force("androidx.core:core:1.9.0")
-        force("androidx.appcompat:appcompat:1.6.1")
     }
 }
 
@@ -46,4 +45,5 @@ dependencies {
     implementation(libs.camera.camera2)
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
+    implementation(libs.camera.video)
 }

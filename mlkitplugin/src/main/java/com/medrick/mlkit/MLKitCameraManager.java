@@ -26,6 +26,7 @@ import com.google.mlkit.vision.face.FaceDetectorOptions;
 import com.unity3d.player.UnityPlayer;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -133,7 +134,7 @@ public class MLKitCameraManager {
 
             // Get image
             InputImage image = InputImage.fromMediaImage(
-                    imageProxy.getImage(),
+                    Objects.requireNonNull(imageProxy.getImage()),
                     imageProxy.getImageInfo().getRotationDegrees());
 
             // Process image
