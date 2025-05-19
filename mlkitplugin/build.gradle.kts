@@ -36,13 +36,14 @@ configurations.all {
 
 dependencies {
     implementation(libs.appcompat)
+    implementation(libs.face.mesh.detection)
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
     compileOnly(files("libs/classes.jar"))
-    implementation("com.google.mlkit:face-detection:16.1.5")
-    implementation("androidx.camera:camera-core:1.2.3")
-    implementation("androidx.camera:camera-camera2:1.2.3")
-    implementation("androidx.camera:camera-lifecycle:1.2.3")
-    implementation("androidx.camera:camera-view:1.2.3")
+    implementation(libs.face.detection)
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
 }
