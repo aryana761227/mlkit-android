@@ -1,21 +1,23 @@
 package com.medrick.mlkit;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Matrix;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.media.Image;
 import android.util.Log;
+import android.util.Size;
 
 import androidx.annotation.NonNull;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.content.ContextCompat;
-import androidx.lifecycle.LifecycleOwner;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
@@ -26,7 +28,6 @@ import com.google.mlkit.vision.face.FaceDetectorOptions;
 import com.unity3d.player.UnityPlayer;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,9 +46,15 @@ public class MLKitCameraManager {
     private int analyzerInterval = 5; // Analyze every 5 frames
     private int frameCounter = 0;
 
+    // Add the LifecycleOwner wrapper
+    private UnityLifecycleOwner lifecycleOwner;
+
     public MLKitCameraManager(Context context) {
         this.context = context;
         cameraExecutor = Executors.newSingleThreadExecutor();
+
+        // Create the lifecycle owner
+        lifecycleOwner = new UnityLifecycleOwner();
 
         // Setup face detector
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
@@ -58,6 +65,8 @@ public class MLKitCameraManager {
                 .build();
 
         faceDetector = FaceDetection.getClient(options);
+
+        Log.d(TAG, "MLKitCameraManager initialized with UnityLifecycleOwner");
     }
 
     public void startCamera() {
@@ -66,9 +75,11 @@ public class MLKitCameraManager {
 
         cameraProviderFuture.addListener(() -> {
             try {
+                Log.d(TAG, "Camera provider future completed");
                 cameraProvider = cameraProviderFuture.get();
                 bindCameraUseCases();
                 isCameraInitialized = true;
+                Log.d(TAG, "Camera initialized successfully, sending to Unity");
                 UnityPlayer.UnitySendMessage("MLKitManager", "OnCameraInitialized", "SUCCESS");
             } catch (ExecutionException | CameraAccessException | InterruptedException e) {
                 Log.e(TAG, "Error starting camera: ", e);
@@ -112,28 +123,21 @@ public class MLKitCameraManager {
             }
         }
 
-        // Bind to lifecycle
+        // Bind to lifecycle using our custom LifecycleOwner instead of casting Unity's activity
         camera = cameraProvider.bindToLifecycle(
-                (LifecycleOwner) UnityPlayer.currentActivity,
+                lifecycleOwner, // Use our custom LifecycleOwner here
                 cameraSelector,
                 preview,
                 imageAnalysis);
     }
 
-    public void initializeFaceDetector() {
-    }
-
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
-        @ExperimentalGetImage
         @Override
         public void analyze(@NonNull ImageProxy imageProxy) {
             frameCounter++;
 
-            Log.d(TAG, "Analyzing frame: " + frameCounter);
-
             // Only analyze every X frames for performance
             if (frameCounter % analyzerInterval != 0) {
-                Log.d(TAG, "Skipping frame due to interval");
                 imageProxy.close();
                 return;
             }
@@ -143,21 +147,11 @@ public class MLKitCameraManager {
                     imageProxy.getImage(),
                     imageProxy.getImageInfo().getRotationDegrees());
 
-            if (image == null) {
-                Log.e(TAG, "Failed to create InputImage - image is null");
-                imageProxy.close();
-                return;
-            }
-
-            Log.d(TAG, "Processing image for face detection...");
-
             // Process image
             faceDetector.process(image)
                     .addOnSuccessListener(faces -> {
-                        Log.d(TAG, "Face detection success! Found " + faces.size() + " faces");
                         // Format results
                         String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
-                        Log.d(TAG, "Sending to Unity: " + result);
                         UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
                     })
                     .addOnFailureListener(e -> {
@@ -165,7 +159,6 @@ public class MLKitCameraManager {
                         UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
                     })
                     .addOnCompleteListener(task -> {
-                        Log.d(TAG, "Face detection task completed");
                         imageProxy.close();
                     });
         }
@@ -178,23 +171,26 @@ public class MLKitCameraManager {
         for (Face face : faces) {
             android.graphics.Rect bounds = face.getBoundingBox();
 
-            // Get existing probabilities
-            Float smileProbability = face.getSmilingProbability();
+            // Convert face bounds to normalized coordinates (0-1)
+            float normalizedLeft = bounds.left / (float) width;
+            float normalizedTop = bounds.top / (float) height;
+            float normalizedWidth = bounds.width() / (float) width;
+            float normalizedHeight = bounds.height() / (float) height;
+
+            Float smilingProbability = face.getSmilingProbability();
             Float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
             Float rightEyeOpenProbability = face.getRightEyeOpenProbability();
-
-            // Calculate upsetness score (inverted smile + eye closure)
-            float upsetness = calculateUpsetness(smileProbability, leftEyeOpenProbability, rightEyeOpenProbability);
-
+            float upsetness = calculateUpsetness(smilingProbability, leftEyeOpenProbability, rightEyeOpenProbability);
             result.append("FACE:")
-                    .append(bounds.left).append(",")
-                    .append(bounds.top).append(",")
-                    .append(bounds.width()).append(",")
-                    .append(bounds.height()).append("|")
-                    .append("SMILE:").append(smileProbability).append("|")
+                    .append(normalizedLeft).append(",")
+                    .append(normalizedTop).append(",")
+                    .append(normalizedWidth).append(",")
+                    .append(normalizedHeight).append("|")
+                    .append("SMILE:").append(smilingProbability).append("|")
                     .append("LEFT_EYE:").append(leftEyeOpenProbability).append("|")
                     .append("RIGHT_EYE:").append(rightEyeOpenProbability).append("|")
                     .append("UPSETNESS:").append(upsetness).append("|");
+
         }
 
         return result.toString();
@@ -251,5 +247,10 @@ public class MLKitCameraManager {
     public void release() {
         stopCamera();
         cameraExecutor.shutdown();
+
+        // Properly destroy our lifecycle owner
+        if (lifecycleOwner != null) {
+            lifecycleOwner.destroy();
+        }
     }
 }

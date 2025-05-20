@@ -51,3 +51,28 @@ dependencies {
     implementation(libs.camera.view)
     implementation(libs.camera.video)
 }
+afterEvaluate {
+    tasks.named("assembleRelease").configure {
+        doLast {
+            val aarName = "mlkitplugin-release.aar"
+            val aarOutput = file("$buildDir/outputs/aar/$aarName")
+            val finalPath = file("D:/Projects/mlkit-for-unity/Assets/Plugins/Android/$aarName")
+
+            // Ensure parent directory exists
+            finalPath.parentFile.mkdirs()
+
+            // Delete old AAR if it exists
+            if (finalPath.exists()) {
+                finalPath.delete()
+            }
+
+            // Copy new AAR
+            copy {
+                from(aarOutput)
+                into(finalPath.parent)
+            }
+
+            println("✅ Exported AAR to: ${finalPath.absolutePath}")
+        }
+    }
+}

@@ -16,22 +16,26 @@ public class UnityMLKitBridge {
 
     // Called from Unity to initialize the ML Kit
     // In UnityMLKitBridge.java
+    // In UnityMLKitBridge.java
     public static void initialize() {
         Log.d(TAG, "Initializing ML Kit");
         currentActivity = UnityPlayer.currentActivity;
-        // Check camera permission first
-        checkCameraPermission();
 
         currentActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    Log.d(TAG, "About to create camera manager");
                     cameraManager = new MLKitCameraManager(currentActivity);
                     Log.d(TAG, "Camera manager created successfully");
+
+                    // Notify Unity that initialization is complete
                     UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "SUCCESS");
+
+                    // Automatically start the camera after initialization
+                    Log.d(TAG, "Auto-starting camera after initialization");
+                    startCamera();
                 } catch (Exception e) {
-                    Log.e(TAG, "Failed to create camera manager", e);
+                    Log.e(TAG, "Error during initialization: " + e.getMessage(), e);
                     UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "ERROR: " + e.getMessage());
                 }
             }
