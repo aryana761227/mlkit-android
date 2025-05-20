@@ -11,12 +11,10 @@ import com.unity3d.player.UnityPlayer;
 
 public class UnityMLKitBridge {
     private static final String TAG = "UnityMLKitBridge";
-    private static MLKitCameraManager cameraManager;  // This is null when startCamera is called
+    private static MLKitCameraManager cameraManager;
     private static Activity currentActivity;
 
     // Called from Unity to initialize the ML Kit
-    // In UnityMLKitBridge.java
-    // In UnityMLKitBridge.java
     public static void initialize() {
         Log.d(TAG, "Initializing ML Kit");
         currentActivity = UnityPlayer.currentActivity;
@@ -41,6 +39,7 @@ public class UnityMLKitBridge {
             }
         });
     }
+
     private static void checkCameraPermission() {
         if (ContextCompat.checkSelfPermission(currentActivity, android.Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -52,6 +51,7 @@ public class UnityMLKitBridge {
             Log.d(TAG, "Camera permission already granted");
         }
     }
+
     // Called from Unity to start the camera
     public static void startCamera() {
         if (cameraManager == null) {
@@ -98,6 +98,22 @@ public class UnityMLKitBridge {
         });
     }
 
+    // NEW METHOD: Configure face detection features
+    public static void configureFaceDetection(final boolean enableLandmarks, final boolean enableContours) {
+        if (cameraManager == null) {
+            Log.e(TAG, "Camera manager not initialized");
+            return;
+        }
+
+        currentActivity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                cameraManager.configureDetection(enableLandmarks, enableContours);
+                Log.d(TAG, "Face detection configured - landmarks: " + enableLandmarks + ", contours: " + enableContours);
+            }
+        });
+    }
+
     // Called from Unity to stop the camera
     public static void stopCamera() {
         if (cameraManager == null) {
@@ -112,7 +128,4 @@ public class UnityMLKitBridge {
             }
         });
     }
-
-    // The face detection will be handled automatically by the camera manager's analyzer
-    // Unity can get the results through the OnFaceDetectionResult callback
 }

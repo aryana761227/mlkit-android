@@ -13,6 +13,7 @@ import android.util.Size;
 import androidx.annotation.NonNull;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ExperimentalGetImage;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
@@ -22,9 +23,11 @@ import androidx.core.content.ContextCompat;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
+import com.google.mlkit.vision.face.FaceContour;
 import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
+import com.google.mlkit.vision.face.FaceLandmark;
 import com.unity3d.player.UnityPlayer;
 
 import java.util.List;
@@ -49,6 +52,10 @@ public class MLKitCameraManager {
     // Add the LifecycleOwner wrapper
     private UnityLifecycleOwner lifecycleOwner;
 
+    // Updated to include more facial features
+    private boolean enableLandmarks = true;
+    private boolean enableContours = true;
+
     public MLKitCameraManager(Context context) {
         this.context = context;
         cameraExecutor = Executors.newSingleThreadExecutor();
@@ -56,17 +63,45 @@ public class MLKitCameraManager {
         // Create the lifecycle owner
         lifecycleOwner = new UnityLifecycleOwner();
 
-        // Setup face detector
+        // Setup face detector with enhanced options
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)  // Enable all landmarks
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)    // Enable all contours
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setMinFaceSize(0.15f)
                 .build();
 
         faceDetector = FaceDetection.getClient(options);
 
-        Log.d(TAG, "MLKitCameraManager initialized with UnityLifecycleOwner");
+        Log.d(TAG, "MLKitCameraManager initialized with UnityLifecycleOwner and enhanced detection options");
+    }
+
+    // Allow options to be configured from Unity
+    public void configureDetection(boolean enableLandmarks, boolean enableContours) {
+        this.enableLandmarks = enableLandmarks;
+        this.enableContours = enableContours;
+
+        // Reinitialize face detector with updated options
+        FaceDetectorOptions.Builder optionsBuilder = new FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+                .setMinFaceSize(0.15f);
+
+        if (enableLandmarks) {
+            optionsBuilder.setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL);
+        } else {
+            optionsBuilder.setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE);
+        }
+
+        if (enableContours) {
+            optionsBuilder.setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL);
+        } else {
+            optionsBuilder.setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE);
+        }
+
+        faceDetector = FaceDetection.getClient(optionsBuilder.build());
+        Log.d(TAG, "Reconfigured face detector - landmarks: " + enableLandmarks + ", contours: " + enableContours);
     }
 
     public void startCamera() {
@@ -132,6 +167,7 @@ public class MLKitCameraManager {
     }
 
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
+        @ExperimentalGetImage
         @Override
         public void analyze(@NonNull ImageProxy imageProxy) {
             frameCounter++;
@@ -143,24 +179,29 @@ public class MLKitCameraManager {
             }
 
             // Get image
-            InputImage image = InputImage.fromMediaImage(
-                    imageProxy.getImage(),
-                    imageProxy.getImageInfo().getRotationDegrees());
+            Image mediaImage = imageProxy.getImage();
+            if (mediaImage != null) {
+                InputImage image = InputImage.fromMediaImage(
+                        mediaImage,
+                        imageProxy.getImageInfo().getRotationDegrees());
 
-            // Process image
-            faceDetector.process(image)
-                    .addOnSuccessListener(faces -> {
-                        // Format results
-                        String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
-                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.e(TAG, "Face detection failed", e);
-                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
-                    })
-                    .addOnCompleteListener(task -> {
-                        imageProxy.close();
-                    });
+                // Process image
+                faceDetector.process(image)
+                        .addOnSuccessListener(faces -> {
+                            // Format results
+                            String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
+                        })
+                        .addOnFailureListener(e -> {
+                            Log.e(TAG, "Face detection failed", e);
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
+                        })
+                        .addOnCompleteListener(task -> {
+                            imageProxy.close();
+                        });
+            } else {
+                imageProxy.close();
+            }
         }
     }
 
@@ -168,7 +209,8 @@ public class MLKitCameraManager {
         StringBuilder result = new StringBuilder();
         result.append("FACES_COUNT:").append(faces.size()).append("|");
 
-        for (Face face : faces) {
+        for (int faceIndex = 0; faceIndex < faces.size(); faceIndex++) {
+            Face face = faces.get(faceIndex);
             android.graphics.Rect bounds = face.getBoundingBox();
 
             // Convert face bounds to normalized coordinates (0-1)
@@ -181,20 +223,108 @@ public class MLKitCameraManager {
             Float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
             Float rightEyeOpenProbability = face.getRightEyeOpenProbability();
             float upsetness = calculateUpsetness(smilingProbability, leftEyeOpenProbability, rightEyeOpenProbability);
+
+            // Basic face data
             result.append("FACE:")
                     .append(normalizedLeft).append(",")
                     .append(normalizedTop).append(",")
                     .append(normalizedWidth).append(",")
                     .append(normalizedHeight).append("|")
-                    .append("SMILE:").append(smilingProbability).append("|")
-                    .append("LEFT_EYE:").append(leftEyeOpenProbability).append("|")
-                    .append("RIGHT_EYE:").append(rightEyeOpenProbability).append("|")
+                    .append("SMILE:").append(smilingProbability != null ? smilingProbability : 0).append("|")
+                    .append("LEFT_EYE:").append(leftEyeOpenProbability != null ? leftEyeOpenProbability : 0).append("|")
+                    .append("RIGHT_EYE:").append(rightEyeOpenProbability != null ? rightEyeOpenProbability : 0).append("|")
                     .append("UPSETNESS:").append(upsetness).append("|");
 
+            // Add landmarks if enabled
+            if (enableLandmarks) {
+                addLandmarks(result, face, faceIndex, width, height);
+            }
+
+            // Add contours if enabled
+            if (enableContours) {
+                addContours(result, face, faceIndex, width, height);
+            }
         }
 
         return result.toString();
     }
+
+    // Helper method to add face landmarks to the result string
+    private void addLandmarks(StringBuilder result, Face face, int faceIndex, int width, int height) {
+        // Process all possible landmarks
+        addLandmarkIfPresent(result, face, FaceLandmark.LEFT_EYE, 0, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.RIGHT_EYE, 1, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.LEFT_EAR, 3, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.RIGHT_EAR, 4, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.LEFT_CHEEK, 5, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.RIGHT_CHEEK, 6, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.NOSE_BASE, 7, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.MOUTH_LEFT, 8, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.MOUTH_RIGHT, 9, faceIndex, width, height);
+        addLandmarkIfPresent(result, face, FaceLandmark.MOUTH_BOTTOM, 10, faceIndex, width, height);
+    }
+
+    // Helper to add a single landmark if it exists
+    private void addLandmarkIfPresent(StringBuilder result, Face face, int landmarkType, int unityLandmarkType,
+                                      int faceIndex, int width, int height) {
+        FaceLandmark landmark = face.getLandmark(landmarkType);
+        if (landmark != null) {
+            // Normalize coordinates
+            float normalizedX = landmark.getPosition().x / (float) width;
+            float normalizedY = landmark.getPosition().y / (float) height;
+
+            result.append("LANDMARK:")
+                    .append(faceIndex).append(",")
+                    .append(unityLandmarkType).append(",")
+                    .append(normalizedX).append(",")
+                    .append(normalizedY).append("|");
+        }
+    }
+
+    // Helper method to add face contours to the result string
+    private void addContours(StringBuilder result, Face face, int faceIndex, int width, int height) {
+        // Process all possible contours
+        addContourIfPresent(result, face, FaceContour.FACE, 1, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LEFT_EYEBROW_TOP, 2, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LEFT_EYEBROW_BOTTOM, 3, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.RIGHT_EYEBROW_TOP, 4, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.RIGHT_EYEBROW_BOTTOM, 5, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LEFT_EYE, 6, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.RIGHT_EYE, 7, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.UPPER_LIP_TOP, 8, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.UPPER_LIP_BOTTOM, 9, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LOWER_LIP_TOP, 10, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LOWER_LIP_BOTTOM, 11, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.NOSE_BRIDGE, 12, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.NOSE_BOTTOM, 13, faceIndex, width, height);
+    }
+
+    // Helper to add a contour if it exists
+    private void addContourIfPresent(StringBuilder result, Face face, int contourType, int unityContourType,
+                                     int faceIndex, int width, int height) {
+        FaceContour contour = face.getContour(contourType);
+        if (contour != null && !contour.getPoints().isEmpty()) {
+            int pointCount = contour.getPoints().size();
+
+            // Add contour start marker
+            result.append("CONTOUR_START:")
+                    .append(faceIndex).append(",")
+                    .append(unityContourType).append(",")
+                    .append(pointCount).append("|");
+
+            // Add each point in the contour
+            for (android.graphics.PointF point : contour.getPoints()) {
+                // Normalize coordinates
+                float normalizedX = point.x / (float) width;
+                float normalizedY = point.y / (float) height;
+
+                result.append("CONTOUR_POINT:")
+                        .append(normalizedX).append(",")
+                        .append(normalizedY).append("|");
+            }
+        }
+    }
+
     private float calculateUpsetness(Float smileProbability, Float leftEyeOpenProbability, Float rightEyeOpenProbability) {
         // Handle null values (can happen if face data is incomplete)
         float smile = smileProbability != null ? smileProbability : 0.5f;
@@ -218,6 +348,7 @@ public class MLKitCameraManager {
         // Ensure range is 0-1
         return Math.min(1.0f, Math.max(0.0f, upsetness));
     }
+
     public void setDetectionInterval(int interval) {
         this.analyzerInterval = Math.max(1, interval);
     }
