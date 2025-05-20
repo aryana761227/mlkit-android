@@ -10,7 +10,6 @@ android {
         minSdk = 23
         targetSdk = 34
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        multiDexEnabled = true
     }
 
     buildTypes {
@@ -25,6 +24,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    packagingOptions {
+        resources {
+            pickFirsts.add("META-INF/*")
+        }
     }
 
 }
@@ -46,4 +50,29 @@ dependencies {
     implementation(libs.camera.lifecycle)
     implementation(libs.camera.view)
     implementation(libs.camera.video)
+}
+afterEvaluate {
+    tasks.named("assembleRelease").configure {
+        doLast {
+            val aarName = "mlkitplugin-release.aar"
+            val aarOutput = file("$buildDir/outputs/aar/$aarName")
+            val finalPath = file("D:/Projects/mlkit-for-unity/Assets/Plugins/Android/$aarName")
+
+            // Ensure parent directory exists
+            finalPath.parentFile.mkdirs()
+
+            // Delete old AAR if it exists
+            if (finalPath.exists()) {
+                finalPath.delete()
+            }
+
+            // Copy new AAR
+            copy {
+                from(aarOutput)
+                into(finalPath.parent)
+            }
+
+            println("✅ Exported AAR to: ${finalPath.absolutePath}")
+        }
+    }
 }

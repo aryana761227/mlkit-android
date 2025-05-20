@@ -1,7 +1,7 @@
 [versions]
 agp = "7.4.2"
 cameraCore = "1.2.3"
-faceDetection = "16.1.7"
+faceDetection = "16.1.5"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
