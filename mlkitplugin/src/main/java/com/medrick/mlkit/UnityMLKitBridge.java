@@ -31,25 +31,12 @@ public class UnityMLKitBridge {
 
                     // Automatically start the camera after initialization
                     Log.d(TAG, "Auto-starting camera after initialization");
-                    startCamera();
                 } catch (Exception e) {
                     Log.e(TAG, "Error during initialization: " + e.getMessage(), e);
                     UnityPlayer.UnitySendMessage("MLKitManager", "OnInitialized", "ERROR: " + e.getMessage());
                 }
             }
         });
-    }
-
-    private static void checkCameraPermission() {
-        if (ContextCompat.checkSelfPermission(currentActivity, android.Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
-
-            Log.d(TAG, "Requesting camera permission");
-            String[] permissions = {android.Manifest.permission.CAMERA};
-            ActivityCompat.requestPermissions(currentActivity, permissions, 100);
-        } else {
-            Log.d(TAG, "Camera permission already granted");
-        }
     }
 
     // Called from Unity to start the camera
