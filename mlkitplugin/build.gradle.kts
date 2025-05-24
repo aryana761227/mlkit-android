@@ -56,12 +56,17 @@ afterEvaluate {
         doLast {
             val aarName = "mlkitplugin-release.aar"
             val aarOutput = file("$buildDir/outputs/aar/$aarName")
-            val finalPath = file("D:/Projects/mlkit-for-unity/Assets/Plugins/Android/$aarName")
+
+            // Get export path from Gradle property
+            val exportPath = project.findProperty("exportPath")?.toString()
+                ?: throw GradleException("Missing -PexportPath=...")
+
+            val finalPath = file("$exportPath/$aarName")
 
             // Ensure parent directory exists
             finalPath.parentFile.mkdirs()
 
-            // Delete old AAR if it exists
+            // Delete old AAR if exists
             if (finalPath.exists()) {
                 finalPath.delete()
             }
@@ -76,3 +81,4 @@ afterEvaluate {
         }
     }
 }
+
