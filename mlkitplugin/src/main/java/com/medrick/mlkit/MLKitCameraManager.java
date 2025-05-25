@@ -46,7 +46,7 @@ public class MLKitCameraManager {
     private int lensFacing = CameraSelector.LENS_FACING_FRONT;
     private int rotationDegrees = 0;
     private boolean isCameraInitialized = false;
-    private int analyzerInterval = 5; // Analyze every 5 frames
+    private int analyzerInterval = 1; // Analyze every 5 frames
     private int frameCounter = 0;
 
     // Add the LifecycleOwner wrapper
