@@ -166,7 +166,16 @@ public class MLKitCameraManager {
                 imageAnalysis);
     }
 
+    // FIXED: Properly implement ImageAnalysis.Analyzer interface
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
+
+        // This method is required for newer versions of CameraX
+        @Override
+        public Size getDefaultTargetResolution() {
+            // Return a reasonable default resolution
+            return new Size(640, 480);
+        }
+
         @ExperimentalGetImage
         @Override
         public void analyze(@NonNull ImageProxy imageProxy) {
@@ -297,6 +306,8 @@ public class MLKitCameraManager {
         addContourIfPresent(result, face, FaceContour.LOWER_LIP_BOTTOM, 11, faceIndex, width, height);
         addContourIfPresent(result, face, FaceContour.NOSE_BRIDGE, 12, faceIndex, width, height);
         addContourIfPresent(result, face, FaceContour.NOSE_BOTTOM, 13, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.LEFT_CHEEK, 14, faceIndex, width, height);
+        addContourIfPresent(result, face, FaceContour.RIGHT_CHEEK, 15, faceIndex, width, height);
     }
 
     // Helper to add a contour if it exists
