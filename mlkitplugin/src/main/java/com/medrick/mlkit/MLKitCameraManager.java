@@ -1,12 +1,11 @@
 package com.medrick.mlkit;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.Matrix;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.Image;
+import android.util.Base64;
 import android.util.Log;
 import android.util.Size;
 
@@ -22,14 +21,23 @@ import androidx.core.content.ContextCompat;
 
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.common.PointF3D;
+import com.google.mlkit.vision.common.Triangle;
 import com.google.mlkit.vision.face.Face;
 import com.google.mlkit.vision.face.FaceContour;
 import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
 import com.google.mlkit.vision.face.FaceLandmark;
+import com.google.mlkit.vision.facemesh.FaceMesh;
+import com.google.mlkit.vision.facemesh.FaceMeshDetection;
+import com.google.mlkit.vision.facemesh.FaceMeshDetector;
+import com.google.mlkit.vision.facemesh.FaceMeshDetectorOptions;
+import com.google.mlkit.vision.facemesh.FaceMeshPoint;
 import com.unity3d.player.UnityPlayer;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -40,13 +48,14 @@ public class MLKitCameraManager {
 
     private Context context;
     private FaceDetector faceDetector;
+    private FaceMeshDetector faceMeshDetector;
     private ExecutorService cameraExecutor;
     private Camera camera;
     private ProcessCameraProvider cameraProvider;
     private int lensFacing = CameraSelector.LENS_FACING_FRONT;
     private int rotationDegrees = 0;
     private boolean isCameraInitialized = false;
-    private int analyzerInterval = 1; // Analyze every 5 frames
+    private int analyzerInterval = 1;
     private int frameCounter = 0;
 
     // Add the LifecycleOwner wrapper
@@ -55,14 +64,15 @@ public class MLKitCameraManager {
     // Updated to include more facial features
     private boolean enableLandmarks = true;
     private boolean enableContours = true;
+    private boolean faceDetectorActivation = false;
+    private boolean faceMeshPointsActivation = true;
+    private boolean faceMeshTrianglesActivation = false;
 
     public MLKitCameraManager(Context context) {
         this.context = context;
         cameraExecutor = Executors.newSingleThreadExecutor();
-
         // Create the lifecycle owner
         lifecycleOwner = new UnityLifecycleOwner();
-
         // Setup face detector with enhanced options
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -71,8 +81,11 @@ public class MLKitCameraManager {
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setMinFaceSize(0.15f)
                 .build();
-
         faceDetector = FaceDetection.getClient(options);
+        FaceMeshDetectorOptions meshOptions = new FaceMeshDetectorOptions.Builder()
+                .setUseCase(FaceMeshDetectorOptions.FACE_MESH)
+                .build();
+        faceMeshDetector = FaceMeshDetection.getClient(meshOptions);
 
         Log.d(TAG, "MLKitCameraManager initialized with UnityLifecycleOwner and enhanced detection options");
     }
@@ -99,11 +112,22 @@ public class MLKitCameraManager {
         } else {
             optionsBuilder.setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE);
         }
-
         faceDetector = FaceDetection.getClient(optionsBuilder.build());
+        FaceMeshDetectorOptions meshOptions = new FaceMeshDetectorOptions.Builder()
+                .setUseCase(FaceMeshDetectorOptions.FACE_MESH)
+                .build();
+        faceMeshDetector = FaceMeshDetection.getClient(meshOptions);
         Log.d(TAG, "Reconfigured face detector - landmarks: " + enableLandmarks + ", contours: " + enableContours);
     }
-
+    public void ActivateLightWeightFaceDetector(boolean faceDetectorActivate){
+        this.faceDetectorActivation = faceDetectorActivate;
+    }
+    public void ActivateFaceMeshPoints(boolean faceMeshPointActivation){
+        this.faceMeshPointsActivation =  faceMeshPointActivation;
+    }
+    public void ActivateFaceMeshTriangles(boolean faceMeshTrianglesActivation){
+        this.faceMeshTrianglesActivation = faceMeshTrianglesActivation;
+    }
     public void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(context);
@@ -166,14 +190,12 @@ public class MLKitCameraManager {
                 imageAnalysis);
     }
 
-    // FIXED: Properly implement ImageAnalysis.Analyzer interface
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
 
-        // This method is required for newer versions of CameraX
         @Override
         public Size getDefaultTargetResolution() {
             // Return a reasonable default resolution
-            return new Size(640, 480);
+            return new Size(1080, 1080);
         }
 
         @ExperimentalGetImage
@@ -190,27 +212,59 @@ public class MLKitCameraManager {
             // Get image
             Image mediaImage = imageProxy.getImage();
             if (mediaImage != null) {
-                InputImage image = InputImage.fromMediaImage(
-                        mediaImage,
-                        imageProxy.getImageInfo().getRotationDegrees());
-
-                // Process image
-                faceDetector.process(image)
-                        .addOnSuccessListener(faces -> {
-                            // Format results
-                            String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
-                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
-                        })
-                        .addOnFailureListener(e -> {
-                            Log.e(TAG, "Face detection failed", e);
-                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
-                        })
-                        .addOnCompleteListener(task -> {
-                            imageProxy.close();
-                        });
+                InputImage image = InputImage.fromMediaImage(mediaImage, imageProxy.getImageInfo().getRotationDegrees());
+                if (faceDetectorActivation){
+                    handleFaceDetection(imageProxy, image);
+                }
+                if (faceMeshPointsActivation || faceMeshTrianglesActivation)
+                {
+                    handleFaceMeshDetection(imageProxy, image);
+                }
             } else {
                 imageProxy.close();
             }
+        }
+
+        private void handleFaceMeshDetection(@NonNull ImageProxy imageProxy, InputImage image) {
+            faceMeshDetector.process(image)
+                    .addOnSuccessListener(faceMeshes -> {
+                        if (faceMeshPointsActivation) {
+                            String result = formatFaceMeshPointsResults(faceMeshes, imageProxy.getWidth(), imageProxy.getHeight());
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceMeshPointsDetectionResult", result);
+                        }
+                        if (faceMeshTrianglesActivation) {
+                            String result2 = formatFaceMeshTrianglesResults(faceMeshes, imageProxy.getWidth(), imageProxy.getHeight());
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceMeshTrianglesDetectionResult", result2);
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "Face mesh detection failed", e);
+                        if (faceMeshPointsActivation) {
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceMeshPointsDetectionResult", "ERROR: " + e.getMessage());
+                        }
+                        if (faceMeshTrianglesActivation) {
+                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceMeshTrianglesDetectionResult", "ERROR: " + e.getMessage());
+                        }
+                    })
+                    .addOnCompleteListener(task -> {
+                        imageProxy.close();
+                    });
+        }
+
+        private void handleFaceDetection(@NonNull ImageProxy imageProxy, InputImage image) {
+            // Process image
+//            faceDetector.process(image)
+//                    .addOnSuccessListener(faces -> {
+//                        String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
+//                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
+//                    })
+//                    .addOnFailureListener(e -> {
+//                        Log.e(TAG, "Face detection failed", e);
+//                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
+//                    })
+//                    .addOnCompleteListener(task -> {
+//                        imageProxy.close();
+//                    });
         }
     }
 
@@ -232,7 +286,6 @@ public class MLKitCameraManager {
             Float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
             Float rightEyeOpenProbability = face.getRightEyeOpenProbability();
             float upsetness = calculateUpsetness(smilingProbability, leftEyeOpenProbability, rightEyeOpenProbability);
-
             // Basic face data
             result.append("FACE:")
                     .append(normalizedLeft).append(",")
@@ -258,6 +311,55 @@ public class MLKitCameraManager {
         return result.toString();
     }
 
+    private String formatFaceMeshPointsResults(List<FaceMesh> faceMeshes, int width, int height) {
+        if (faceMeshes.isEmpty()) return "";
+
+        FaceMesh faceMesh = faceMeshes.get(0); // Assuming only one face faceMesh
+        List<FaceMeshPoint> points = faceMesh.getAllPoints();
+        int spaceRequiredPerFaceMeshPoint = 16; // 1 int = 4byte, 3float = 12byte => 16byte
+        ByteBuffer buffer = ByteBuffer.allocate(4 + points.size() * spaceRequiredPerFaceMeshPoint);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(points.size());
+        for (FaceMeshPoint p : points) {
+            PointF3D pos = p.getPosition();
+            int index = p.getIndex();
+            float posX = pos.getX() / (float) width;
+            float posY = pos.getY() / (float) height;
+            float posZ = pos.getZ() / (float) width;
+            buffer.putInt(index);
+            buffer.putFloat(posX);
+            buffer.putFloat(posY);
+            buffer.putFloat(posZ);
+        }
+        return Base64.encodeToString(buffer.array(), 0, buffer.position(), Base64.NO_WRAP);
+    }
+    private String formatFaceMeshTrianglesResults(List<FaceMesh> faceMeshes, int width, int height) {
+        if (faceMeshes.isEmpty()) return "";
+
+        FaceMesh faceMesh = faceMeshes.get(0); // Assuming only one face faceMesh
+        List<Triangle<FaceMeshPoint>> triangles = faceMesh.getAllTriangles();
+        int spaceRequiredPerFaceMeshPoint = 16; // 1 int = 4byte, 3float = 12byte => 16byte
+        int triangleVertexesCount = 3; // 1 int = 4byte, 3float = 12byte => 16byte
+        ByteBuffer buffer = ByteBuffer.allocate(4 + triangles.size() * triangleVertexesCount * spaceRequiredPerFaceMeshPoint);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(triangles.size());
+        int tCount = 0;
+        for (Triangle<FaceMeshPoint> triangle : triangles) {
+            for (FaceMeshPoint p : triangle.getAllPoints()) {
+                PointF3D pos = p.getPosition();
+                int index = p.getIndex();
+                float posX = pos.getX() / (float) width;
+                float posY = pos.getY() / (float) height;
+                float posZ = pos.getZ() / (float) width;
+                buffer.putInt(index);
+                buffer.putFloat(posX);
+                buffer.putFloat(posY);
+                buffer.putFloat(posZ);
+            tCount++;
+            }
+        }
+        return Base64.encodeToString(buffer.array(), 0, buffer.position(), Base64.NO_WRAP);
+    }
     // Helper method to add face landmarks to the result string
     private void addLandmarks(StringBuilder result, Face face, int faceIndex, int width, int height) {
         // Process all possible landmarks
