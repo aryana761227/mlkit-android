@@ -85,7 +85,7 @@ public class UnityMLKitBridge {
         });
     }
 
-    // NEW METHOD: Configure face detection features
+    // Configure face detection features
     public static void configureFaceDetection(final boolean enableLandmarks, final boolean enableContours) {
         if (cameraManager == null) {
             Log.e(TAG, "Camera manager not initialized");
@@ -97,6 +97,38 @@ public class UnityMLKitBridge {
             public void run() {
                 cameraManager.configureDetection(enableLandmarks, enableContours);
                 Log.d(TAG, "Face detection configured - landmarks: " + enableLandmarks + ", contours: " + enableContours);
+            }
+        });
+    }
+
+    // NEW METHOD: Set detection mode (FACE_DETECTION or FACE_MESH)
+    public static void setDetectionMode(final String mode) {
+        if (cameraManager == null) {
+            Log.e(TAG, "Camera manager not initialized");
+            return;
+        }
+
+        currentActivity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                cameraManager.setDetectionMode(mode);
+                Log.d(TAG, "Detection mode set to: " + mode);
+            }
+        });
+    }
+
+    // NEW METHOD: Configure face mesh detection
+    public static void configureFaceMesh(final boolean useHighAccuracy) {
+        if (cameraManager == null) {
+            Log.e(TAG, "Camera manager not initialized");
+            return;
+        }
+
+        currentActivity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                cameraManager.configureFaceMesh(useHighAccuracy);
+                Log.d(TAG, "Face mesh configured - high accuracy: " + useHighAccuracy);
             }
         });
     }

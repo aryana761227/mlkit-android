@@ -38,15 +38,23 @@ import java.util.concurrent.Executors;
 public class MLKitCameraManager {
     private static final String TAG = "MLKitCameraManager";
 
+    // Detection modes
+    public enum DetectionMode {
+        FACE_DETECTION,
+        FACE_MESH
+    }
+
     private Context context;
     private FaceDetector faceDetector;
+    private MLKitFaceMeshDetector faceMeshDetector; // Add face mesh detector
+    private DetectionMode currentMode = DetectionMode.FACE_DETECTION;
     private ExecutorService cameraExecutor;
     private Camera camera;
     private ProcessCameraProvider cameraProvider;
     private int lensFacing = CameraSelector.LENS_FACING_FRONT;
     private int rotationDegrees = 0;
     private boolean isCameraInitialized = false;
-    private int analyzerInterval = 1; // Analyze every 5 frames
+    private int analyzerInterval = 1; // Analyze every X frames
     private int frameCounter = 0;
 
     // Add the LifecycleOwner wrapper
@@ -55,6 +63,7 @@ public class MLKitCameraManager {
     // Updated to include more facial features
     private boolean enableLandmarks = true;
     private boolean enableContours = true;
+    private boolean useHighAccuracyMesh = true; // For face mesh mode
 
     public MLKitCameraManager(Context context) {
         this.context = context;
@@ -63,18 +72,50 @@ public class MLKitCameraManager {
         // Create the lifecycle owner
         lifecycleOwner = new UnityLifecycleOwner();
 
+        // Initialize face detector
+        initializeFaceDetector();
+
+        // Initialize face mesh detector
+        faceMeshDetector = new MLKitFaceMeshDetector(context);
+        faceMeshDetector.configureFaceMeshDetector(useHighAccuracyMesh);
+        faceMeshDetector.initializeFaceMeshDetector();
+
+        Log.d(TAG, "MLKitCameraManager initialized with both face detection and face mesh support");
+    }
+
+    private void initializeFaceDetector() {
         // Setup face detector with enhanced options
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)  // Enable all landmarks
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)    // Enable all contours
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .setMinFaceSize(0.15f)
                 .build();
 
         faceDetector = FaceDetection.getClient(options);
+    }
 
-        Log.d(TAG, "MLKitCameraManager initialized with UnityLifecycleOwner and enhanced detection options");
+    // Set detection mode
+    public void setDetectionMode(String mode) {
+        try {
+            currentMode = DetectionMode.valueOf(mode);
+            Log.d(TAG, "Detection mode set to: " + currentMode);
+
+            // Notify Unity about mode change
+            UnityPlayer.UnitySendMessage("MLKitManager", "OnDetectionModeChanged", mode);
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "Invalid detection mode: " + mode);
+        }
+    }
+
+    // Configure face mesh detector
+    public void configureFaceMesh(boolean useHighAccuracy) {
+        this.useHighAccuracyMesh = useHighAccuracy;
+        if (faceMeshDetector != null) {
+            faceMeshDetector.configureFaceMeshDetector(useHighAccuracy);
+            faceMeshDetector.initializeFaceMeshDetector();
+        }
     }
 
     // Allow options to be configured from Unity
@@ -166,13 +207,11 @@ public class MLKitCameraManager {
                 imageAnalysis);
     }
 
-    // FIXED: Properly implement ImageAnalysis.Analyzer interface
+    // Image analyzer that switches between face detection and face mesh
     private class FaceAnalyzer implements ImageAnalysis.Analyzer {
 
-        // This method is required for newer versions of CameraX
         @Override
         public Size getDefaultTargetResolution() {
-            // Return a reasonable default resolution
             return new Size(640, 480);
         }
 
@@ -190,27 +229,109 @@ public class MLKitCameraManager {
             // Get image
             Image mediaImage = imageProxy.getImage();
             if (mediaImage != null) {
-                InputImage image = InputImage.fromMediaImage(
-                        mediaImage,
-                        imageProxy.getImageInfo().getRotationDegrees());
-
-                // Process image
-                faceDetector.process(image)
-                        .addOnSuccessListener(faces -> {
-                            // Format results
-                            String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
-                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
-                        })
-                        .addOnFailureListener(e -> {
-                            Log.e(TAG, "Face detection failed", e);
-                            UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
-                        })
-                        .addOnCompleteListener(task -> {
-                            imageProxy.close();
-                        });
+                // Choose detection method based on current mode
+                if (currentMode == DetectionMode.FACE_MESH) {
+                    processFaceMesh(imageProxy, mediaImage);
+                } else {
+                    processFaceDetection(imageProxy, mediaImage);
+                }
             } else {
                 imageProxy.close();
             }
+        }
+
+        private void processFaceDetection(ImageProxy imageProxy, Image mediaImage) {
+            InputImage image = InputImage.fromMediaImage(
+                    mediaImage,
+                    imageProxy.getImageInfo().getRotationDegrees());
+
+            // Process image with face detector
+            faceDetector.process(image)
+                    .addOnSuccessListener(faces -> {
+                        // Format results
+                        String result = formatFaceResults(faces, imageProxy.getWidth(), imageProxy.getHeight());
+                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", result);
+                    })
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "Face detection failed", e);
+                        UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceDetectionResult", "ERROR: " + e.getMessage());
+                    })
+                    .addOnCompleteListener(task -> {
+                        imageProxy.close();
+                    });
+        }
+
+        private void processFaceMesh(ImageProxy imageProxy, Image mediaImage) {
+            // Convert to YUV format for face mesh detector
+            byte[] yuvData = convertImageToYuv(mediaImage);
+
+            if (yuvData != null) {
+                faceMeshDetector.detectFaceMesh(
+                        yuvData,
+                        imageProxy.getWidth(),
+                        imageProxy.getHeight(),
+                        imageProxy.getImageInfo().getRotationDegrees(),
+                        new MLKitResultCallback() {
+                            @Override
+                            public void onResult(String result) {
+                                // Send to Unity using a different callback for face mesh
+                                UnityPlayer.UnitySendMessage("MLKitManager", "OnFaceMeshResult", result);
+                                imageProxy.close();
+                            }
+                        }
+                );
+            } else {
+                imageProxy.close();
+            }
+        }
+    }
+
+    // Convert Image to YUV byte array
+    private byte[] convertImageToYuv(Image image) {
+        try {
+            Image.Plane[] planes = image.getPlanes();
+            int width = image.getWidth();
+            int height = image.getHeight();
+
+            // Y plane
+            Image.Plane yPlane = planes[0];
+            int ySize = yPlane.getBuffer().remaining();
+
+            // UV planes
+            Image.Plane uPlane = planes[1];
+            Image.Plane vPlane = planes[2];
+            int uvPixelStride = uPlane.getPixelStride();
+
+            // Create YUV byte array
+            byte[] yuvData = new byte[width * height + (width * height) / 2];
+
+            // Copy Y plane
+            yPlane.getBuffer().get(yuvData, 0, ySize);
+
+            // Copy UV planes (interleaved)
+            int uvIndex = width * height;
+            if (uvPixelStride == 1) {
+                // Packed format
+                uPlane.getBuffer().get(yuvData, uvIndex, uPlane.getBuffer().remaining());
+            } else {
+                // Planar format - need to interleave
+                byte[] uData = new byte[uPlane.getBuffer().remaining()];
+                byte[] vData = new byte[vPlane.getBuffer().remaining()];
+                uPlane.getBuffer().get(uData);
+                vPlane.getBuffer().get(vData);
+
+                for (int i = 0; i < uData.length; i++) {
+                    yuvData[uvIndex++] = vData[i];
+                    if (i < uData.length) {
+                        yuvData[uvIndex++] = uData[i];
+                    }
+                }
+            }
+
+            return yuvData;
+        } catch (Exception e) {
+            Log.e(TAG, "Error converting image to YUV", e);
+            return null;
         }
     }
 
@@ -343,20 +464,12 @@ public class MLKitCameraManager {
         float rightEye = rightEyeOpenProbability != null ? rightEyeOpenProbability : 0.5f;
 
         // Calculate upsetness score (range 0-1)
-        // 1. Invert smile (not smiling can indicate upset)
         float notSmiling = 1.0f - smile;
-
-        // 2. Eye openness - both fully open or fully closed aren't upset indicators
-        //    Partially closed eyes can indicate upset
         float leftEyeUpset = Math.abs(leftEye - 0.3f) < 0.3f ? (0.3f - Math.abs(leftEye - 0.3f)) / 0.3f : 0f;
         float rightEyeUpset = Math.abs(rightEye - 0.3f) < 0.3f ? (0.3f - Math.abs(rightEye - 0.3f)) / 0.3f : 0f;
         float eyeUpset = Math.max(leftEyeUpset, rightEyeUpset);
-
-        // 3. Combine factors (weighted sum)
-        // Not smiling is a stronger indicator than eye state
         float upsetness = (0.7f * notSmiling) + (0.3f * eyeUpset);
 
-        // Ensure range is 0-1
         return Math.min(1.0f, Math.max(0.0f, upsetness));
     }
 
