@@ -96,7 +96,7 @@ public class UnityMLKitBridge {
         });
     }
     // Called from Unity to set detection interval (landmark and contours)
-    public static void setFaceActivation(final boolean enableLightWeightFaceDetector, final boolean enableFaceMeshPoints, final boolean enableFaceMeshTriangles) {
+    public static void setFaceActivations(final boolean enableLightWeightFaceDetector, final boolean enableFaceMeshPoints, final boolean enableFaceMeshTriangles) {
         if (cameraManager == null) {
             Log.e(TAG, "Camera manager not initialized");
             return;
