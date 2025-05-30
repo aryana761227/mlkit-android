@@ -90,7 +90,7 @@ public class UnityMLKitBridge {
         currentActivity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                cameraManager.configureDetection(enableLandmarks, enableContours);
+//                cameraManager.configureDetection(enableLandmarks, enableContours);
                 Log.d(TAG, "Face detection configured - landmarks: " + enableLandmarks + ", contours: " + enableContours);
             }
         });
